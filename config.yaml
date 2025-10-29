@@ -1,0 +1,30 @@
+# Benchmark Configuration
+models:
+  - name: "whisper-turbo-tr-ft-merged"
+    type: "whisper"
+    path: "freyavoice/whisper-turbo-tr-ft-merged"
+    enabled: true
+
+datasets:
+  - name: "freyavoice-benchmark"
+    path: "freyavoice/speech-to-text-benchmark"
+    split: "train"
+    enabled: true
+  
+benchmark:
+  batch_size: 1
+  max_new_tokens: 400
+  num_beams: 5
+  device: "auto"  
+  torch_dtype: "float16"  
+
+api:
+  host: "0.0.0.0"
+  port: 8000
+  reload: false
+
+output:
+  results_dir: "results"
+  save_transcriptions: true
+  save_metrics: true
+  save_visualizations: true

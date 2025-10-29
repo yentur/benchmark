@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>STT Benchmark Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1 class="title">Speech-to-Text Benchmark</h1>
+            <div class="subtitle">Real-time Model Performance Analysis</div>
+        </header>
+
+        <!-- Control Panel -->
+        <section class="control-panel">
+            <button id="startBtn" class="btn btn-primary">Start Benchmark</button>
+            <div class="status-indicator">
+                <span class="status-dot" id="statusDot"></span>
+                <span id="statusText">Ready</span>
+            </div>
+        </section>
+
+        <!-- Progress Section -->
+        <section class="card" id="progressSection" style="display: none;">
+            <h2 class="card-title">Progress</h2>
+            <div class="progress-info">
+                <div class="info-row">
+                    <span class="label">Current Model:</span>
+                    <span id="currentModel" class="value">-</span>
+                </div>
+                <div class="info-row">
+                    <span class="label">Current Dataset:</span>
+                    <span id="currentDataset" class="value">-</span>
+                </div>
+                <div class="info-row">
+                    <span class="label">Progress:</span>
+                    <span id="progressText" class="value">0/0</span>
+                </div>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <div class="message" id="statusMessage">Initializing...</div>
+        </section>
+
+        <!-- Configuration -->
+        <section class="card">
+            <h2 class="card-title">Configuration</h2>
+            <div id="configSection" class="config-grid">
+                <div class="config-item">
+                    <h3>Models</h3>
+                    <div id="modelsList" class="list">Loading...</div>
+                </div>
+                <div class="config-item">
+                    <h3>Datasets</h3>
+                    <div id="datasetsList" class="list">Loading...</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Results -->
+        <section class="card" id="resultsSection" style="display: none;">
+            <h2 class="card-title">Results</h2>
+            <div id="resultsTable"></div>
+        </section>
+
+        <!-- Visualizations -->
+        <section class="card" id="visualizationsSection" style="display: none;">
+            <h2 class="card-title">Visualizations</h2>
+            <div id="visualizationsGrid" class="viz-grid"></div>
+        </section>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>

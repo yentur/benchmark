@@ -1,0 +1,33 @@
+# Core dependencies
+transformers>=4.35.0
+torch>=2.0.0
+torchaudio>=2.0.0
+
+# Audio processing
+librosa>=0.10.0
+soundfile>=0.12.0
+
+# Datasets
+datasets>=2.14.0
+
+# Metrics
+jiwer>=3.0.0
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+pandas>=2.0.0
+
+# API
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+websockets>=12.0
+
+# Utilities
+pyyaml>=6.0
+tqdm>=4.66.0
+numpy>=1.24.0
+
+# Optional: CUDA support
+# Install separately based on your system:
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
