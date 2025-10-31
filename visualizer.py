@@ -53,94 +53,109 @@ class BenchmarkVisualizer:
         
         models = list(results.keys())
         
+        # Initialize chart data structure - FIX: Proper format for Chart.js
         chart_data = {
             'models': models,
             'colors': self.colors,
-            'timestamp': np.datetime64('now').astype(str),
-            'metrics': {},
-            'distributions': {},
+            'timestamp': str(np.datetime64('now')),
             'performance_scores': [],
-            'rankings': {}
-        }
-        
-        # Aggregate metrics for each model
-        for metric in ['wer', 'cer', 'latency', 'throughput']:
-            chart_data['metrics'][metric] = {
+            'rankings': {},
+            # FIX: Proper nested structure for metrics
+            'wer': {
                 'mean': [],
                 'std': [],
                 'min': [],
                 'max': []
-            }
-        
-        # Add latency percentiles
-        chart_data['metrics']['latency']['p50'] = []
-        chart_data['metrics']['latency']['p95'] = []
-        chart_data['metrics']['latency']['p99'] = []
+            },
+            'cer': {
+                'mean': [],
+                'std': [],
+                'min': [],
+                'max': []
+            },
+            'latency': {
+                'mean': [],
+                'std': [],
+                'min': [],
+                'max': [],
+                'p50': [],
+                'p95': [],
+                'p99': []
+            },
+            'throughput': {
+                'mean': [],
+                'std': [],
+                'min': [],
+                'max': []
+            },
+            'distributions': {}
+        }
         
         # Process each model
         for model_name in models:
             agg = results[model_name].get('aggregated', {})
             
             # WER metrics
-            chart_data['metrics']['wer']['mean'].append(agg.get('wer_mean', 0))
-            chart_data['metrics']['wer']['std'].append(agg.get('wer_std', 0))
-            chart_data['metrics']['wer']['min'].append(agg.get('wer_min', 0))
-            chart_data['metrics']['wer']['max'].append(agg.get('wer_max', 0))
+            chart_data['wer']['mean'].append(round(agg.get('wer_mean', 0), 2))
+            chart_data['wer']['std'].append(round(agg.get('wer_std', 0), 2))
+            chart_data['wer']['min'].append(round(agg.get('wer_min', 0), 2))
+            chart_data['wer']['max'].append(round(agg.get('wer_max', 0), 2))
             
             # CER metrics
-            chart_data['metrics']['cer']['mean'].append(agg.get('cer_mean', 0))
-            chart_data['metrics']['cer']['std'].append(agg.get('cer_std', 0))
-            chart_data['metrics']['cer']['min'].append(agg.get('cer_min', 0))
-            chart_data['metrics']['cer']['max'].append(agg.get('cer_max', 0))
+            chart_data['cer']['mean'].append(round(agg.get('cer_mean', 0), 2))
+            chart_data['cer']['std'].append(round(agg.get('cer_std', 0), 2))
+            chart_data['cer']['min'].append(round(agg.get('cer_min', 0), 2))
+            chart_data['cer']['max'].append(round(agg.get('cer_max', 0), 2))
             
             # Latency metrics
-            chart_data['metrics']['latency']['mean'].append(agg.get('latency_mean', 0))
-            chart_data['metrics']['latency']['std'].append(agg.get('latency_std', 0))
-            chart_data['metrics']['latency']['min'].append(agg.get('latency_min', 0))
-            chart_data['metrics']['latency']['max'].append(agg.get('latency_max', 0))
-            chart_data['metrics']['latency']['p50'].append(agg.get('latency_p50', 0))
-            chart_data['metrics']['latency']['p95'].append(agg.get('latency_p95', 0))
-            chart_data['metrics']['latency']['p99'].append(agg.get('latency_p99', 0))
+            chart_data['latency']['mean'].append(round(agg.get('latency_mean', 0), 3))
+            chart_data['latency']['std'].append(round(agg.get('latency_std', 0), 3))
+            chart_data['latency']['min'].append(round(agg.get('latency_min', 0), 3))
+            chart_data['latency']['max'].append(round(agg.get('latency_max', 0), 3))
+            chart_data['latency']['p50'].append(round(agg.get('latency_p50', 0), 3))
+            chart_data['latency']['p95'].append(round(agg.get('latency_p95', 0), 3))
+            chart_data['latency']['p99'].append(round(agg.get('latency_p99', 0), 3))
             
             # Throughput metrics
-            chart_data['metrics']['throughput']['mean'].append(agg.get('throughput_mean', 0))
-            chart_data['metrics']['throughput']['std'].append(agg.get('throughput_std', 0))
-            chart_data['metrics']['throughput']['min'].append(agg.get('throughput_min', 0))
-            chart_data['metrics']['throughput']['max'].append(agg.get('throughput_max', 0))
+            chart_data['throughput']['mean'].append(round(agg.get('throughput_mean', 0), 1))
+            chart_data['throughput']['std'].append(round(agg.get('throughput_std', 0), 1))
+            chart_data['throughput']['min'].append(round(agg.get('throughput_min', 0), 1))
+            chart_data['throughput']['max'].append(round(agg.get('throughput_max', 0), 1))
             
             # Detailed distributions
             detailed = results[model_name].get('detailed_results', [])
             chart_data['distributions'][model_name] = {
-                'wer': [r.get('wer', 0) for r in detailed if 'wer' in r],
-                'cer': [r.get('cer', 0) for r in detailed if 'cer' in r],
-                'latency': [r.get('latency', 0) for r in detailed if 'latency' in r],
-                'throughput': [r.get('throughput', 0) for r in detailed if 'throughput' in r]
+                'wer': [round(r.get('wer', 0), 2) for r in detailed if 'wer' in r],
+                'cer': [round(r.get('cer', 0), 2) for r in detailed if 'cer' in r],
+                'latency': [round(r.get('latency', 0), 3) for r in detailed if 'latency' in r],
+                'throughput': [round(r.get('throughput', 0), 1) for r in detailed if 'throughput' in r]
             }
             
             # Performance score
             score = self._calculate_performance_score(agg)
             chart_data['performance_scores'].append(score)
         
-        # Rankings
-        chart_data['rankings']['best_wer'] = models[
-            np.argmin(chart_data['metrics']['wer']['mean'])
-        ] if models else None
-        
-        chart_data['rankings']['best_cer'] = models[
-            np.argmin(chart_data['metrics']['cer']['mean'])
-        ] if models else None
-        
-        chart_data['rankings']['fastest'] = models[
-            np.argmin(chart_data['metrics']['latency']['mean'])
-        ] if models else None
-        
-        chart_data['rankings']['best_throughput'] = models[
-            np.argmax(chart_data['metrics']['throughput']['mean'])
-        ] if models else None
-        
-        chart_data['rankings']['best_overall'] = models[
-            np.argmax(chart_data['performance_scores'])
-        ] if models else None
+        # Rankings - Find best models
+        if models:
+            chart_data['rankings']['best_wer'] = models[
+                int(np.argmin(chart_data['wer']['mean']))
+            ]
+            
+            chart_data['rankings']['best_cer'] = models[
+                int(np.argmin(chart_data['cer']['mean']))
+            ]
+            
+            chart_data['rankings']['fastest'] = models[
+                int(np.argmin(chart_data['latency']['mean']))
+            ]
+            
+            chart_data['rankings']['best_throughput'] = models[
+                int(np.argmax(chart_data['throughput']['mean']))
+            ]
+            
+            chart_data['rankings']['best_overall'] = models[
+                int(np.argmax(chart_data['performance_scores']))
+            ]
         
         return chart_data
     
@@ -173,11 +188,13 @@ class BenchmarkVisualizer:
             
         except Exception as e:
             print(f"⚠ Error saving chart data: {e}")
+            import traceback
+            traceback.print_exc()
             return chart_data
     
     def create_multi_metric_comparison(self, results: Dict[str, Dict[str, Any]]):
         """Create comparison data for all metrics"""
-        self.create_charts_json(results)
+        return self.create_charts_json(results)
     
     def create_latency_distribution(self, results: Dict[str, Dict[str, Any]]):
         """Create latency distribution data (included in charts_json)"""
@@ -209,6 +226,8 @@ class BenchmarkVisualizer:
             
         except Exception as e:
             print(f"⚠ Error saving results: {e}")
+            import traceback
+            traceback.print_exc()
     
     def generate_html_dashboard(self, results: Dict[str, Dict[str, Any]]) -> str:
         """Generate a simple HTML dashboard"""

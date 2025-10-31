@@ -28,7 +28,7 @@ class BenchmarkRunner:
         self.results_dir = Path(self.config['output']['results_dir'])
         self.results_dir.mkdir(exist_ok=True)
         
-        self.cache_dir = Path("cache")
+        self.cache_dir = Path(self.config['output']['cache_dir'])
         self.cache_dir.mkdir(exist_ok=True)
         
         self.visualizer = BenchmarkVisualizer(str(self.results_dir))
@@ -299,11 +299,22 @@ class BenchmarkRunner:
             # Save to cache immediately
             self.all_results[model_name] = model_results
             self._save_cache()
+            
+            # IMPORTANT: Generate visualizations after each model
+            self._generate_visualizations()
         else:
             print(f"⚠ Warning: No results collected for {model_name}")
             return None
         
         return model_results
+    
+    def _generate_visualizations(self):
+        """Generate visualizations from current results"""
+        try:
+            if self.all_results and self.config['output'].get('save_visualizations', True):
+                self.visualizer.create_charts_json(self.all_results)
+        except Exception as e:
+            print(f"⚠ Warning generating visualizations: {e}")
     
     def run(self):
         """Run complete benchmark"""
@@ -349,11 +360,11 @@ class BenchmarkRunner:
                 traceback.print_exc()
                 continue
         
-        # Generate reports
+        # Generate final reports
         if self.all_results:
             self.update_status(
                 status="generating_reports",
-                message="Generating reports and visualizations..."
+                message="Generating final reports and visualizations..."
             )
             self.generate_reports()
         else:
@@ -386,8 +397,11 @@ class BenchmarkRunner:
             
             # Create visualizations
             if self.config['output'].get('save_visualizations', True):
-                self.visualizer.create_multi_metric_comparison(self.all_results)
-                print("✓ Created visualization data (charts_data.json)")
+                chart_data = self.visualizer.create_charts_json(self.all_results)
+                if chart_data:
+                    print("✓ Created visualization data (charts_data.json)")
+                else:
+                    print("⚠ Warning: Chart data is empty")
                 
         except Exception as e:
             print(f"⚠ Warning: Error creating visualizations: {str(e)}")
@@ -414,4 +428,4 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n✗ Fatal error: {e}")
         import traceback
-        traceback.print_exc()
+        traceback.print_exc()   

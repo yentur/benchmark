@@ -395,27 +395,54 @@ function createModelCards(results) {
     }).join('');
 }
 
-// Load Charts Data
+// Load Charts Data - FIX: Use correct endpoint
 async function loadChartsData() {
     try {
-        // Load chart data from results
-        const response = await fetch('/results/charts_data.json');
+        console.log('Loading chart data...');
+        
+        // FIX: Use API endpoint instead of direct file access
+        const response = await fetch('/api/visualization/charts_data.json');
+        
+        if (!response.ok) {
+            console.error('Charts data not found, status:', response.status);
+            return;
+        }
+        
         const chartData = await response.json();
+        console.log('Chart data loaded:', chartData);
+        
+        // Validate chart data
+        if (!chartData || !chartData.models || chartData.models.length === 0) {
+            console.error('Invalid chart data structure');
+            return;
+        }
         
         chartsSection.style.display = 'block';
-        
         createAllCharts(chartData);
         
     } catch (error) {
         console.error('Error loading charts:', error);
+        console.log('Charts will be generated after benchmark completion');
     }
 }
 
-// Create all charts
+// Create all charts - FIX: Proper data access
 function createAllCharts(data) {
+    console.log('Creating charts with data:', data);
+    
     // Destroy existing charts
-    Object.values(charts).forEach(chart => chart.destroy());
+    Object.values(charts).forEach(chart => {
+        if (chart && typeof chart.destroy === 'function') {
+            chart.destroy();
+        }
+    });
     charts = {};
+    
+    // Validate data structure
+    if (!data.wer || !data.cer || !data.latency || !data.throughput) {
+        console.error('Missing required data fields');
+        return;
+    }
     
     // 1. WER Chart
     charts.wer = createBarChart('werChart', {
@@ -525,12 +552,17 @@ function createAllCharts(data) {
             }
         ]
     }, 'Error Rate Comparison');
+    
+    console.log('All charts created successfully');
 }
 
 // Create bar chart helper
 function createBarChart(canvasId, data, title) {
     const ctx = document.getElementById(canvasId);
-    if (!ctx) return null;
+    if (!ctx) {
+        console.error('Canvas not found:', canvasId);
+        return null;
+    }
     
     return new Chart(ctx, {
         type: 'bar',
@@ -578,7 +610,10 @@ function createBarChart(canvasId, data, title) {
 // Create grouped bar chart helper
 function createGroupedBarChart(canvasId, data, title) {
     const ctx = document.getElementById(canvasId);
-    if (!ctx) return null;
+    if (!ctx) {
+        console.error('Canvas not found:', canvasId);
+        return null;
+    }
     
     return new Chart(ctx, {
         type: 'bar',
