@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>STT Benchmark Dashboard</title>
     <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
     <div class="container">
@@ -12,7 +13,7 @@
         <header class="header">
             <div class="header-content">
                 <h1 class="title">STT BENCHMARK</h1>
-                <div class="subtitle">Real-time Speech-to-Text Performance Analysis</div>
+                <div class="subtitle">Real-time Speech-to-Text Performance Analysis with Parallel Processing</div>
             </div>
             <div class="header-actions">
                 <button id="clearCacheBtn" class="btn btn-secondary">
@@ -25,7 +26,7 @@
         <section class="control-panel card">
             <div class="control-left">
                 <button id="startBtn" class="btn btn-primary">
-                    <span class="icon">▶</span> Start Benchmark
+                    <span class="icon">▶</span> Start Parallel Benchmark
                 </button>
                 <div class="cache-status" id="cacheStatus">
                     <span class="cache-icon">💾</span>
@@ -65,7 +66,7 @@
                 </div>
             </div>
             
-            <div class="message" id="statusMessage">Initializing...</div>
+            <div class="message" id="statusMessage">Initializing parallel processing...</div>
             
             <!-- Sample Preview -->
             <div class="sample-preview" id="samplePreview" style="display: none;">
@@ -104,12 +105,52 @@
             <div class="model-cards" id="modelCards"></div>
         </section>
 
-        <!-- Visualizations -->
-        <section class="card viz-section" id="visualizationsSection" style="display: none;">
+        <!-- Chart.js Visualizations -->
+        <section class="card viz-section" id="chartsSection" style="display: none;">
             <h2 class="card-title">
-                <span class="icon">📈</span> Visualizations
+                <span class="icon">📈</span> Interactive Charts
             </h2>
-            <div class="viz-grid" id="visualizationsGrid"></div>
+            
+            <!-- Main Metrics Grid -->
+            <div class="charts-grid">
+                <div class="chart-container">
+                    <h3 class="chart-title">Word Error Rate (WER)</h3>
+                    <canvas id="werChart"></canvas>
+                </div>
+                
+                <div class="chart-container">
+                    <h3 class="chart-title">Character Error Rate (CER)</h3>
+                    <canvas id="cerChart"></canvas>
+                </div>
+                
+                <div class="chart-container">
+                    <h3 class="chart-title">Latency Comparison</h3>
+                    <canvas id="latencyChart"></canvas>
+                </div>
+                
+                <div class="chart-container">
+                    <h3 class="chart-title">Throughput Analysis</h3>
+                    <canvas id="throughputChart"></canvas>
+                </div>
+            </div>
+            
+            <!-- Advanced Charts -->
+            <div class="charts-grid-full">
+                <div class="chart-container-full">
+                    <h3 class="chart-title">Latency Percentiles (P50, P95, P99)</h3>
+                    <canvas id="latencyPercentilesChart"></canvas>
+                </div>
+                
+                <div class="chart-container-full">
+                    <h3 class="chart-title">Overall Performance Score</h3>
+                    <canvas id="performanceChart"></canvas>
+                </div>
+                
+                <div class="chart-container-full">
+                    <h3 class="chart-title">Error Rate Overview</h3>
+                    <canvas id="errorOverviewChart"></canvas>
+                </div>
+            </div>
         </section>
 
         <!-- Configuration (Collapsible) -->

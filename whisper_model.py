@@ -11,11 +11,24 @@ class WhisperModel(BaseSTTModel):
         """Load Whisper model and processor"""
         dtype = torch.float16 if self.config.get("torch_dtype") == "float16" else torch.float32
         
+        # Parse device - convert "auto" to actual device
+        device_config = self.config.get("device", "auto")
+        if device_config == "auto":
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            device = device_config
+        
+        print(f"Loading Whisper model on device: {device}")
+        
+        # Load WITHOUT device_map to avoid meta device issues in multi-threaded context
         self.model = WhisperForConditionalGeneration.from_pretrained(
             self.model_path,
             torch_dtype=dtype,
-            device_map=self.config.get("device", "auto")
+            low_cpu_mem_usage=False  # Prevents meta device issues
         )
+        
+        # Manually move to device AFTER loading
+        self.model = self.model.to(device)
         
         self.processor = WhisperProcessor.from_pretrained(
             self.model_path,
@@ -28,7 +41,7 @@ class WhisperModel(BaseSTTModel):
         self.model.generation_config.language = "turkish"
         self.model.generation_config.task = "transcribe"
         
-        print(f"✓ Loaded Whisper model: {self.model_path}")
+        print(f"✓ Loaded Whisper model on {device}: {self.model_path}")
         
     def transcribe(self, audio_path: str) -> str:
         """Transcribe audio file"""

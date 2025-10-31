@@ -2,6 +2,7 @@
 let ws = null;
 let isRunning = false;
 let cachedModels = [];
+let charts = {};
 
 // DOM Elements
 const startBtn = document.getElementById('startBtn');
@@ -27,11 +28,37 @@ const resultsSection = document.getElementById('resultsSection');
 const quickStats = document.getElementById('quickStats');
 const resultsTable = document.getElementById('resultsTable');
 const modelCards = document.getElementById('modelCards');
-const visualizationsSection = document.getElementById('visualizationsSection');
-const visualizationsGrid = document.getElementById('visualizationsGrid');
+const chartsSection = document.getElementById('chartsSection');
 const exampleModal = document.getElementById('exampleModal');
 const modalTitle = document.getElementById('modalTitle');
 const modalBody = document.getElementById('modalBody');
+
+// Chart.js default config
+Chart.defaults.font.family = 'Inter, -apple-system, sans-serif';
+Chart.defaults.font.size = 13;
+Chart.defaults.color = '#000000';
+Chart.defaults.plugins.legend.display = true;
+Chart.defaults.plugins.legend.position = 'top';
+Chart.defaults.scale.grid.color = '#e8e8e8';
+
+// Color scheme
+const colors = {
+    primary: 'rgba(0, 0, 0, 0.9)',
+    dark: 'rgba(26, 26, 26, 0.9)',
+    medium: 'rgba(74, 74, 74, 0.9)',
+    light: 'rgba(122, 122, 122, 0.9)',
+    lighter: 'rgba(160, 160, 160, 0.9)',
+    lightest: 'rgba(208, 208, 208, 0.9)'
+};
+
+const colorPalette = [
+    colors.primary,
+    colors.dark,
+    colors.medium,
+    colors.light,
+    colors.lighter,
+    colors.lightest
+];
 
 // Initialize
 async function init() {
@@ -131,7 +158,7 @@ async function startBenchmark() {
             isRunning = true;
             progressSection.style.display = 'block';
             statusDot.classList.add('active');
-            statusText.textContent = 'Running';
+            statusText.textContent = 'Running (Parallel)';
         } else {
             alert(data.message);
             startBtn.disabled = false;
@@ -201,7 +228,7 @@ function updateStatus(status) {
         statusDot.classList.remove('active');
         samplePreview.style.display = 'none';
         loadResults();
-        loadVisualizations();
+        loadChartsData();
         loadCacheStatus();
     }
     
@@ -368,6 +395,240 @@ function createModelCards(results) {
     }).join('');
 }
 
+// Load Charts Data
+async function loadChartsData() {
+    try {
+        // Load chart data from results
+        const response = await fetch('/results/charts_data.json');
+        const chartData = await response.json();
+        
+        chartsSection.style.display = 'block';
+        
+        createAllCharts(chartData);
+        
+    } catch (error) {
+        console.error('Error loading charts:', error);
+    }
+}
+
+// Create all charts
+function createAllCharts(data) {
+    // Destroy existing charts
+    Object.values(charts).forEach(chart => chart.destroy());
+    charts = {};
+    
+    // 1. WER Chart
+    charts.wer = createBarChart('werChart', {
+        labels: data.models,
+        datasets: [{
+            label: 'WER (%)',
+            data: data.wer.mean,
+            backgroundColor: colorPalette,
+            borderColor: colors.primary,
+            borderWidth: 2
+        }]
+    }, 'Word Error Rate (Lower is Better)');
+    
+    // 2. CER Chart
+    charts.cer = createBarChart('cerChart', {
+        labels: data.models,
+        datasets: [{
+            label: 'CER (%)',
+            data: data.cer.mean,
+            backgroundColor: colorPalette,
+            borderColor: colors.primary,
+            borderWidth: 2
+        }]
+    }, 'Character Error Rate (Lower is Better)');
+    
+    // 3. Latency Chart
+    charts.latency = createBarChart('latencyChart', {
+        labels: data.models,
+        datasets: [{
+            label: 'Latency (s)',
+            data: data.latency.mean,
+            backgroundColor: colorPalette,
+            borderColor: colors.primary,
+            borderWidth: 2
+        }]
+    }, 'Average Latency (Lower is Better)');
+    
+    // 4. Throughput Chart
+    charts.throughput = createBarChart('throughputChart', {
+        labels: data.models,
+        datasets: [{
+            label: 'Throughput (chars/s)',
+            data: data.throughput.mean,
+            backgroundColor: colorPalette,
+            borderColor: colors.primary,
+            borderWidth: 2
+        }]
+    }, 'Throughput (Higher is Better)');
+    
+    // 5. Latency Percentiles
+    charts.latencyPercentiles = createGroupedBarChart('latencyPercentilesChart', {
+        labels: data.models,
+        datasets: [
+            {
+                label: 'P50',
+                data: data.latency.p50,
+                backgroundColor: colors.primary,
+                borderColor: colors.primary,
+                borderWidth: 2
+            },
+            {
+                label: 'P95',
+                data: data.latency.p95,
+                backgroundColor: colors.medium,
+                borderColor: colors.medium,
+                borderWidth: 2
+            },
+            {
+                label: 'P99',
+                data: data.latency.p99,
+                backgroundColor: colors.light,
+                borderColor: colors.light,
+                borderWidth: 2
+            }
+        ]
+    }, 'Latency Percentiles');
+    
+    // 6. Performance Score
+    charts.performance = createBarChart('performanceChart', {
+        labels: data.models,
+        datasets: [{
+            label: 'Performance Score',
+            data: data.performance_scores,
+            backgroundColor: colorPalette,
+            borderColor: colors.primary,
+            borderWidth: 2
+        }]
+    }, 'Overall Performance Score (Higher is Better)');
+    
+    // 7. Error Rate Overview
+    charts.errorOverview = createGroupedBarChart('errorOverviewChart', {
+        labels: data.models,
+        datasets: [
+            {
+                label: 'WER (%)',
+                data: data.wer.mean,
+                backgroundColor: colors.primary,
+                borderColor: colors.primary,
+                borderWidth: 2
+            },
+            {
+                label: 'CER (%)',
+                data: data.cer.mean,
+                backgroundColor: colors.medium,
+                borderColor: colors.medium,
+                borderWidth: 2
+            }
+        ]
+    }, 'Error Rate Comparison');
+}
+
+// Create bar chart helper
+function createBarChart(canvasId, data, title) {
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return null;
+    
+    return new Chart(ctx, {
+        type: 'bar',
+        data: data,
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: {
+                    display: false
+                },
+                tooltip: {
+                    backgroundColor: colors.dark,
+                    titleFont: { size: 14, weight: 'bold' },
+                    bodyFont: { size: 13 },
+                    padding: 12,
+                    cornerRadius: 8
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    grid: {
+                        color: '#e8e8e8'
+                    },
+                    ticks: {
+                        font: { size: 12 }
+                    }
+                },
+                x: {
+                    grid: {
+                        display: false
+                    },
+                    ticks: {
+                        font: { size: 11 },
+                        maxRotation: 45,
+                        minRotation: 0
+                    }
+                }
+            }
+        }
+    });
+}
+
+// Create grouped bar chart helper
+function createGroupedBarChart(canvasId, data, title) {
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return null;
+    
+    return new Chart(ctx, {
+        type: 'bar',
+        data: data,
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                    labels: {
+                        font: { size: 12, weight: 'bold' },
+                        padding: 15,
+                        usePointStyle: true
+                    }
+                },
+                tooltip: {
+                    backgroundColor: colors.dark,
+                    titleFont: { size: 14, weight: 'bold' },
+                    bodyFont: { size: 13 },
+                    padding: 12,
+                    cornerRadius: 8
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    grid: {
+                        color: '#e8e8e8'
+                    },
+                    ticks: {
+                        font: { size: 12 }
+                    }
+                },
+                x: {
+                    grid: {
+                        display: false
+                    },
+                    ticks: {
+                        font: { size: 11 },
+                        maxRotation: 45,
+                        minRotation: 0
+                    }
+                }
+            }
+        }
+    });
+}
+
 // Show model examples in modal
 async function showModelExamples(modelName) {
     modalTitle.textContent = `${modelName} - Example Predictions`;
@@ -380,13 +641,11 @@ async function showModelExamples(modelName) {
         
         if (data.examples && data.examples.length > 0) {
             modalBody.innerHTML = data.examples.map((example, idx) => {
-                const werClass = example.wer < 10 ? 'good' : example.wer < 30 ? 'medium' : 'bad';
-                
                 return `
                     <div class="example-item">
                         <div class="example-header">
                             <div class="example-id">Sample #${idx + 1}</div>
-                            <div class="example-wer" style="color: ${example.wer < 10 ? '#000' : example.wer < 30 ? '#4a4a4a' : '#7a7a7a'}">
+                            <div class="example-wer">
                                 WER: ${example.wer.toFixed(2)}%
                             </div>
                         </div>
@@ -424,58 +683,10 @@ window.onclick = function(event) {
     }
 }
 
-// Load visualizations
-async function loadVisualizations() {
-    try {
-        const response = await fetch('/api/visualizations');
-        const visualizations = await response.json();
-        
-        if (visualizations.length === 0) {
-            return;
-        }
-        
-        visualizationsSection.style.display = 'block';
-        
-        visualizationsGrid.innerHTML = visualizations.map(viz => {
-            if (viz.type === 'html') {
-                return `
-                    <div class="viz-item">
-                        <iframe src="${viz.url}" loading="lazy"></iframe>
-                        <div class="viz-title">
-                            <span>${viz.name.replace(/_/g, ' ')}</span>
-                            <button class="viz-expand-btn" onclick="expandVisualization('${viz.url}', '${viz.name}')">
-                                ⛶ Fullscreen
-                            </button>
-                        </div>
-                    </div>
-                `;
-            } else {
-                return `
-                    <div class="viz-item">
-                        <img src="${viz.url}" alt="${viz.name}" loading="lazy">
-                        <div class="viz-title">${viz.name.replace(/_/g, ' ')}</div>
-                    </div>
-                `;
-            }
-        }).join('');
-    } catch (error) {
-        console.error('Error loading visualizations:', error);
-    }
-}
-
-// Expand visualization to fullscreen
-function expandVisualization(url, name) {
-    modalTitle.textContent = name.replace(/_/g, ' ');
-    modalBody.innerHTML = `
-        <iframe src="${url}" style="width: 100%; height: 80vh; border: none;"></iframe>
-    `;
-    exampleModal.style.display = 'block';
-}
-
 // Check for existing results on load
 async function checkExistingResults() {
     await loadResults();
-    await loadVisualizations();
+    await loadChartsData();
 }
 
 // Toggle configuration
@@ -493,7 +704,6 @@ clearCacheBtn.addEventListener('click', clearCache);
 
 // Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
-    // ESC to close modal
     if (e.key === 'Escape' && exampleModal.style.display === 'block') {
         closeModal();
     }
@@ -502,4 +712,4 @@ document.addEventListener('keydown', (e) => {
 // Initialize on page load
 init();
 
-console.log('Dashboard script loaded successfully');
+console.log('Chart.js Dashboard loaded successfully');

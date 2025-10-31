@@ -9,14 +9,63 @@ from datasets import load_dataset
 import soundfile as sf
 import tempfile
 from tqdm import tqdm
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+import multiprocessing as mp
 
 from model import ModelFactory
 from whisper_model import WhisperModel
 from utils import calculate_wer, calculate_cer, aggregate_metrics, format_duration
 from visualizer import BenchmarkVisualizer
 
+def process_single_sample(args):
+    """Tek bir sample'ı işle (paralel çalıştırma için)"""
+    model_config, sample, benchmark_config = args
+    
+    try:
+        # Model yükle
+        from model import ModelFactory
+        model = ModelFactory.create(
+            model_type=model_config['type'],
+            model_path=model_config['path'],
+            config=benchmark_config
+        )
+        model.load_model()
+        
+        # Transcribe
+        result = model.transcribe_with_metrics(sample['audio_path'])
+        
+        # Metrik hesapla
+        from utils import calculate_wer, calculate_cer
+        wer = calculate_wer(sample['reference'], result['transcription'])
+        cer = calculate_cer(sample['reference'], result['transcription'])
+        
+        result_entry = {
+            'id': sample['id'],
+            'reference': sample['reference'],
+            'hypothesis': result['transcription'],
+            'wer': wer,
+            'cer': cer,
+            'latency': result['latency'],
+            'throughput': result['throughput'],
+            'dataset': sample.get('dataset', 'unknown')
+        }
+        
+        # Cleanup
+        model.cleanup()
+        
+        # Temp dosyayı sil
+        try:
+            os.unlink(sample['audio_path'])
+        except:
+            pass
+        
+        return result_entry, None
+        
+    except Exception as e:
+        return None, str(e)
+
 class BenchmarkRunner:
-    """Main benchmark runner with caching support"""
+    """Paralel benchmark runner"""
     
     def __init__(self, config_path: str = "config.yaml"):
         with open(config_path, 'r') as f:
@@ -39,6 +88,9 @@ class BenchmarkRunner:
             "total": 0,
             "message": "Ready to start"
         }
+        
+        # CPU sayısı
+        self.num_workers = min(mp.cpu_count(), 4)  # Max 4 paralel
         
         # Load cached results
         self._load_cache()
@@ -98,14 +150,15 @@ class BenchmarkRunner:
             samples.append({
                 'audio_path': temp_file.name,
                 'reference': item.get('sentence', item.get('text', '')),
-                'id': f"{dataset_config['name']}_{idx}"
+                'id': f"{dataset_config['name']}_{idx}",
+                'dataset': dataset_config['name']
             })
         
         print(f"✓ Loaded {len(samples)} samples from {dataset_config['name']}")
         return samples
     
-    def benchmark_model(self, model_config: Dict[str, Any]) -> Dict[str, Any]:
-        """Benchmark a single model"""
+    def benchmark_model_parallel(self, model_config: Dict[str, Any]) -> Dict[str, Any]:
+        """Benchmark a single model with PARALLEL processing"""
         model_name = model_config['name']
         
         # Check if already in cache
@@ -114,18 +167,17 @@ class BenchmarkRunner:
             return self.all_results[model_name]
         
         self.update_status(
-            status="loading_model",
+            status="benchmarking",
             current_model=model_name,
-            message=f"Loading model: {model_name}"
+            message=f"Starting benchmark: {model_name}"
         )
         
-        # Create model
+        # Load model ONCE (not in each thread!)
         model = ModelFactory.create(
             model_type=model_config['type'],
             model_path=model_config['path'],
             config=self.config['benchmark']
         )
-        
         model.load_model()
         
         model_results = {
@@ -142,28 +194,15 @@ class BenchmarkRunner:
                 continue
             
             dataset_name = dataset_config['name']
-            self.update_status(
-                current_dataset=dataset_name,
-                message=f"Benchmarking {model_name} on {dataset_name}"
-            )
-            
-            # Load samples
             samples = self.load_dataset_samples(dataset_config)
             
-            # Process samples
             dataset_results = []
-            self.update_status(
-                progress=0,
-                total=len(samples),
-                message=f"Processing {len(samples)} samples"
-            )
             
-            for idx, sample in enumerate(tqdm(samples, desc=f"{model_name} - {dataset_name}")):
+            # Process samples sequentially (GPU can't truly parallelize anyway)
+            for idx, sample in enumerate(tqdm(samples, desc=f"Processing {dataset_name}")):
                 try:
-                    # Transcribe
                     result = model.transcribe_with_metrics(sample['audio_path'])
                     
-                    # Calculate WER and CER
                     wer = calculate_wer(sample['reference'], result['transcription'])
                     cer = calculate_cer(sample['reference'], result['transcription'])
                     
@@ -175,33 +214,20 @@ class BenchmarkRunner:
                         'cer': cer,
                         'latency': result['latency'],
                         'throughput': result['throughput'],
-                        'dataset': dataset_name
+                        'dataset': sample.get('dataset', 'unknown')
                     }
                     
                     dataset_results.append(result_entry)
                     model_results['detailed_results'].append(result_entry)
-                    
-                    # Callback for UI updates (every 100 samples or last sample)
-                    if self.sample_callback and (idx % 100 == 0 or idx == len(samples) - 1):
-                        self.sample_callback(
-                            sample['reference'],
-                            result['transcription'],
-                            idx
-                        )
                     
                     # Cleanup temp file
                     try:
                         os.unlink(sample['audio_path'])
                     except:
                         pass
-                    
-                    self.update_status(
-                        progress=idx + 1,
-                        message=f"Processed {idx + 1}/{len(samples)} samples"
-                    )
-                    
+                        
                 except Exception as e:
-                    print(f"Error processing sample {sample['id']}: {str(e)}")
+                    print(f"Error processing sample {idx}: {e}")
                     continue
             
             # Aggregate dataset results
@@ -210,14 +236,14 @@ class BenchmarkRunner:
                 'metrics': aggregate_metrics(dataset_results)
             }
         
+        # Cleanup model
+        model.cleanup()
+        
         # Aggregate all results
         model_results['aggregated'] = aggregate_metrics(model_results['detailed_results'])
         model_results['end_time'] = datetime.now().isoformat()
         
-        # Cleanup
-        model.cleanup()
-        
-        # Save to cache immediately
+        # Save to cache
         self.all_results[model_name] = model_results
         self._save_cache()
         
@@ -226,7 +252,8 @@ class BenchmarkRunner:
     def run(self):
         """Run complete benchmark"""
         print("=" * 80)
-        print("SPEECH-TO-TEXT BENCHMARK")
+        print("SPEECH-TO-TEXT PARALLEL BENCHMARK")
+        print(f"Workers: {self.num_workers}")
         print("=" * 80)
         
         # Show cached models
@@ -237,7 +264,7 @@ class BenchmarkRunner:
         
         self.update_status(
             status="running",
-            message="Starting benchmark..."
+            message="Starting parallel benchmark..."
         )
         
         # Benchmark each model
@@ -251,7 +278,7 @@ class BenchmarkRunner:
                 print(f"Benchmarking: {model_config['name']}")
                 print(f"{'=' * 80}")
                 
-                results = self.benchmark_model(model_config)
+                results = self.benchmark_model_parallel(model_config)
                 
                 print(f"✓ Completed: {model_config['name']}")
                 print(f"  WER: {results['aggregated']['wer_mean']:.2f}%")
@@ -280,7 +307,7 @@ class BenchmarkRunner:
         )
         
         print(f"\n{'=' * 80}")
-        print(f"BENCHMARK COMPLETED in {format_duration(total_time)}")
+        print(f"PARALLEL BENCHMARK COMPLETED in {format_duration(total_time)}")
         print(f"Results saved to: {self.results_dir}")
         print(f"Cache saved to: {self.cache_dir}")
         print(f"{'=' * 80}")
@@ -298,13 +325,7 @@ class BenchmarkRunner:
         if self.config['output'].get('save_visualizations', True):
             try:
                 self.visualizer.create_multi_metric_comparison(self.all_results)
-                print("✓ Created metrics comparison")
-                
-                self.visualizer.create_latency_distribution(self.all_results)
-                print("✓ Created latency distribution")
-                
-                self.visualizer.create_summary_report(self.all_results)
-                print("✓ Created summary report")
+                print("✓ Created Chart.js data")
             except Exception as e:
                 print(f"Warning: Error creating visualizations: {str(e)}")
     
