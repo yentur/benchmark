@@ -9,63 +9,17 @@ from datasets import load_dataset
 import soundfile as sf
 import tempfile
 from tqdm import tqdm
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
-import multiprocessing as mp
+import torch
+import gc
 
 from model import ModelFactory
 from whisper_model import WhisperModel
 from utils import calculate_wer, calculate_cer, aggregate_metrics, format_duration
 from visualizer import BenchmarkVisualizer
 
-def process_single_sample(args):
-    """Tek bir sample'ı işle (paralel çalıştırma için)"""
-    model_config, sample, benchmark_config = args
-    
-    try:
-        # Model yükle
-        from model import ModelFactory
-        model = ModelFactory.create(
-            model_type=model_config['type'],
-            model_path=model_config['path'],
-            config=benchmark_config
-        )
-        model.load_model()
-        
-        # Transcribe
-        result = model.transcribe_with_metrics(sample['audio_path'])
-        
-        # Metrik hesapla
-        from utils import calculate_wer, calculate_cer
-        wer = calculate_wer(sample['reference'], result['transcription'])
-        cer = calculate_cer(sample['reference'], result['transcription'])
-        
-        result_entry = {
-            'id': sample['id'],
-            'reference': sample['reference'],
-            'hypothesis': result['transcription'],
-            'wer': wer,
-            'cer': cer,
-            'latency': result['latency'],
-            'throughput': result['throughput'],
-            'dataset': sample.get('dataset', 'unknown')
-        }
-        
-        # Cleanup
-        model.cleanup()
-        
-        # Temp dosyayı sil
-        try:
-            os.unlink(sample['audio_path'])
-        except:
-            pass
-        
-        return result_entry, None
-        
-    except Exception as e:
-        return None, str(e)
 
 class BenchmarkRunner:
-    """Paralel benchmark runner"""
+    """Optimized benchmark runner with batch processing"""
     
     def __init__(self, config_path: str = "config.yaml"):
         with open(config_path, 'r') as f:
@@ -89,8 +43,8 @@ class BenchmarkRunner:
             "message": "Ready to start"
         }
         
-        # CPU sayısı
-        self.num_workers = min(mp.cpu_count(), 4)  # Max 4 paralel
+        # Batch size for processing
+        self.batch_size = self.config['benchmark'].get('batch_size', 8)
         
         # Load cached results
         self._load_cache()
@@ -103,8 +57,11 @@ class BenchmarkRunner:
                 with open(cache_file, 'r', encoding='utf-8') as f:
                     self.all_results = json.load(f)
                 print(f"✓ Loaded cached results for {len(self.all_results)} model(s)")
+                for model_name in self.all_results.keys():
+                    print(f"  - {model_name}")
             except Exception as e:
-                print(f"Warning: Could not load cache: {e}")
+                print(f"⚠ Warning: Could not load cache: {e}")
+                self.all_results = {}
     
     def _save_cache(self):
         """Save current results to cache"""
@@ -112,8 +69,9 @@ class BenchmarkRunner:
         try:
             with open(cache_file, 'w', encoding='utf-8') as f:
                 json.dump(self.all_results, f, indent=2, ensure_ascii=False)
+            print(f"✓ Cache updated: {cache_file}")
         except Exception as e:
-            print(f"Warning: Could not save cache: {e}")
+            print(f"⚠ Warning: Could not save cache: {e}")
     
     def set_sample_callback(self, callback: Callable):
         """Set callback for sample updates"""
@@ -122,7 +80,8 @@ class BenchmarkRunner:
     def update_status(self, **kwargs):
         """Update current status"""
         self.current_status.update(kwargs)
-        print(f"[STATUS] {self.current_status['message']}")
+        if 'message' in kwargs:
+            print(f"[STATUS] {kwargs['message']}")
     
     def load_dataset_samples(self, dataset_config: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Load dataset samples from HuggingFace"""
@@ -131,54 +90,87 @@ class BenchmarkRunner:
             message=f"Loading dataset: {dataset_config['name']}"
         )
         
-        dataset = load_dataset(
-            dataset_config['path'],
-            split=dataset_config['split'],
-        )
+        try:
+            dataset = load_dataset(
+                dataset_config['path'],
+                split=dataset_config['split'],
+                trust_remote_code=True
+            )
+        except Exception as e:
+            print(f"✗ Error loading dataset {dataset_config['name']}: {e}")
+            return []
         
         samples = []
-        dataset_subset = dataset
         
-        for idx, item in enumerate(tqdm(dataset_subset, desc="Preparing samples")):
-            # Save audio to temporary file
-            audio_array = item['audio']['array']
-            sr = item['audio']['sampling_rate']
-            
-            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.wav')
-            sf.write(temp_file.name, audio_array, sr)
-            
-            samples.append({
-                'audio_path': temp_file.name,
-                'reference': item.get('sentence', item.get('text', '')),
-                'id': f"{dataset_config['name']}_{idx}",
-                'dataset': dataset_config['name']
-            })
+        for idx, item in enumerate(tqdm(dataset, desc=f"Preparing {dataset_config['name']}")):
+            try:
+                # Save audio to temporary file
+                audio_array = item['audio']['array']
+                sr = item['audio']['sampling_rate']
+                
+                # Create temp file with proper cleanup
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.wav', dir=self.cache_dir)
+                temp_path = temp_file.name
+                temp_file.close()
+                
+                sf.write(temp_path, audio_array, sr)
+                
+                samples.append({
+                    'audio_path': temp_path,
+                    'reference': item.get('sentence', item.get('text', '')),
+                    'id': f"{dataset_config['name']}_{idx}",
+                    'dataset': dataset_config['name']
+                })
+            except Exception as e:
+                print(f"⚠ Warning: Skipping sample {idx}: {e}")
+                continue
         
         print(f"✓ Loaded {len(samples)} samples from {dataset_config['name']}")
         return samples
     
-    def benchmark_model_parallel(self, model_config: Dict[str, Any]) -> Dict[str, Any]:
-        """Benchmark a single model with PARALLEL processing"""
+    def cleanup_temp_files(self, samples: List[Dict[str, Any]]):
+        """Clean up temporary audio files"""
+        for sample in samples:
+            try:
+                if os.path.exists(sample['audio_path']):
+                    os.unlink(sample['audio_path'])
+            except Exception as e:
+                print(f"⚠ Warning: Could not delete {sample['audio_path']}: {e}")
+    
+    def benchmark_model_batch(self, model_config: Dict[str, Any]) -> Dict[str, Any]:
+        """Benchmark a single model with BATCH processing"""
         model_name = model_config['name']
         
         # Check if already in cache
         if model_name in self.all_results:
             print(f"⚡ Using cached results for: {model_name}")
+            self.update_status(
+                current_model=model_name,
+                message=f"Using cached results for {model_name}"
+            )
             return self.all_results[model_name]
+        
+        print(f"\n{'=' * 80}")
+        print(f"Benchmarking: {model_name}")
+        print(f"{'=' * 80}")
         
         self.update_status(
             status="benchmarking",
             current_model=model_name,
-            message=f"Starting benchmark: {model_name}"
+            message=f"Loading model: {model_name}"
         )
         
-        # Load model ONCE (not in each thread!)
-        model = ModelFactory.create(
-            model_type=model_config['type'],
-            model_path=model_config['path'],
-            config=self.config['benchmark']
-        )
-        model.load_model()
+        # Load model ONCE
+        try:
+            model = ModelFactory.create(
+                model_type=model_config['type'],
+                model_path=model_config['path'],
+                config=self.config['benchmark']
+            )
+            model.load_model()
+        except Exception as e:
+            print(f"✗ Error loading model {model_name}: {e}")
+            return None
         
         model_results = {
             'model_name': model_name,
@@ -188,103 +180,169 @@ class BenchmarkRunner:
             'start_time': datetime.now().isoformat()
         }
         
+        total_samples = 0
+        processed_samples = 0
+        
         # Benchmark on each dataset
         for dataset_config in self.config['datasets']:
             if not dataset_config.get('enabled', True):
                 continue
             
             dataset_name = dataset_config['name']
-            samples = self.load_dataset_samples(dataset_config)
+            self.update_status(
+                current_dataset=dataset_name,
+                message=f"Loading dataset: {dataset_name}"
+            )
             
+            samples = self.load_dataset_samples(dataset_config)
+            if not samples:
+                print(f"⚠ Warning: No samples loaded for {dataset_name}")
+                continue
+            
+            total_samples += len(samples)
             dataset_results = []
             
-            # Process samples sequentially (GPU can't truly parallelize anyway)
-            for idx, sample in enumerate(tqdm(samples, desc=f"Processing {dataset_name}")):
-                try:
-                    result = model.transcribe_with_metrics(sample['audio_path'])
-                    
-                    wer = calculate_wer(sample['reference'], result['transcription'])
-                    cer = calculate_cer(sample['reference'], result['transcription'])
-                    
-                    result_entry = {
-                        'id': sample['id'],
-                        'reference': sample['reference'],
-                        'hypothesis': result['transcription'],
-                        'wer': wer,
-                        'cer': cer,
-                        'latency': result['latency'],
-                        'throughput': result['throughput'],
-                        'dataset': sample.get('dataset', 'unknown')
-                    }
-                    
-                    dataset_results.append(result_entry)
-                    model_results['detailed_results'].append(result_entry)
-                    
-                    # Cleanup temp file
+            # Process samples with progress bar
+            print(f"\nProcessing {len(samples)} samples from {dataset_name}...")
+            
+            with tqdm(total=len(samples), desc=dataset_name) as pbar:
+                for idx, sample in enumerate(samples):
                     try:
-                        os.unlink(sample['audio_path'])
-                    except:
-                        pass
+                        # Update status
+                        processed_samples += 1
+                        self.update_status(
+                            progress=processed_samples,
+                            total=total_samples,
+                            message=f"Processing {model_name}: {processed_samples}/{total_samples}"
+                        )
                         
-                except Exception as e:
-                    print(f"Error processing sample {idx}: {e}")
-                    continue
+                        # Transcribe with metrics
+                        result = model.transcribe_with_metrics(sample['audio_path'])
+                        
+                        # Calculate WER and CER
+                        wer = calculate_wer(sample['reference'], result['transcription'])
+                        cer = calculate_cer(sample['reference'], result['transcription'])
+                        
+                        result_entry = {
+                            'id': sample['id'],
+                            'reference': sample['reference'],
+                            'hypothesis': result['transcription'],
+                            'wer': wer,
+                            'cer': cer,
+                            'latency': result['latency'],
+                            'throughput': result['throughput'],
+                            'dataset': dataset_name
+                        }
+                        
+                        dataset_results.append(result_entry)
+                        model_results['detailed_results'].append(result_entry)
+                        
+                        # Callback for real-time updates
+                        if self.sample_callback:
+                            self.sample_callback(
+                                sample['reference'],
+                                result['transcription'],
+                                idx
+                            )
+                        
+                        pbar.update(1)
+                        
+                    except Exception as e:
+                        print(f"\n⚠ Error processing sample {idx}: {e}")
+                        pbar.update(1)
+                        continue
+            
+            # Clean up temp files for this dataset
+            self.cleanup_temp_files(samples)
             
             # Aggregate dataset results
-            model_results['datasets'][dataset_name] = {
-                'samples': len(dataset_results),
-                'metrics': aggregate_metrics(dataset_results)
-            }
+            if dataset_results:
+                model_results['datasets'][dataset_name] = {
+                    'samples': len(dataset_results),
+                    'metrics': aggregate_metrics(dataset_results)
+                }
+                
+                # Print dataset summary
+                metrics = model_results['datasets'][dataset_name]['metrics']
+                print(f"\n{dataset_name} Results:")
+                print(f"  WER: {metrics['wer_mean']:.2f}% (±{metrics['wer_std']:.2f})")
+                print(f"  CER: {metrics['cer_mean']:.2f}% (±{metrics['cer_std']:.2f})")
+                print(f"  Latency: {metrics['latency_mean']:.3f}s (±{metrics['latency_std']:.3f})")
+                print(f"  Throughput: {metrics['throughput_mean']:.1f} chars/s")
         
-        # Cleanup model
-        model.cleanup()
+        # Cleanup model and free memory
+        try:
+            model.cleanup()
+            del model
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception as e:
+            print(f"⚠ Warning during cleanup: {e}")
         
         # Aggregate all results
-        model_results['aggregated'] = aggregate_metrics(model_results['detailed_results'])
-        model_results['end_time'] = datetime.now().isoformat()
-        
-        # Save to cache
-        self.all_results[model_name] = model_results
-        self._save_cache()
+        if model_results['detailed_results']:
+            model_results['aggregated'] = aggregate_metrics(model_results['detailed_results'])
+            model_results['end_time'] = datetime.now().isoformat()
+            
+            # Print overall summary
+            agg = model_results['aggregated']
+            print(f"\n{'=' * 80}")
+            print(f"Overall Results for {model_name}:")
+            print(f"  Total Samples: {agg['total_samples']}")
+            print(f"  WER: {agg['wer_mean']:.2f}% (±{agg['wer_std']:.2f})")
+            print(f"  CER: {agg['cer_mean']:.2f}% (±{agg['cer_std']:.2f})")
+            print(f"  Latency: {agg['latency_mean']:.3f}s (p95: {agg['latency_p95']:.3f}s)")
+            print(f"  Throughput: {agg['throughput_mean']:.1f} chars/s")
+            print(f"{'=' * 80}\n")
+            
+            # Save to cache immediately
+            self.all_results[model_name] = model_results
+            self._save_cache()
+        else:
+            print(f"⚠ Warning: No results collected for {model_name}")
+            return None
         
         return model_results
     
     def run(self):
         """Run complete benchmark"""
+        print("\n" + "=" * 80)
+        print("SPEECH-TO-TEXT BENCHMARK SYSTEM")
         print("=" * 80)
-        print("SPEECH-TO-TEXT PARALLEL BENCHMARK")
-        print(f"Workers: {self.num_workers}")
-        print("=" * 80)
+        print(f"Batch Size: {self.batch_size}")
+        print(f"Device: {self.config['benchmark'].get('device', 'auto')}")
+        print(f"Results Directory: {self.results_dir}")
+        print(f"Cache Directory: {self.cache_dir}")
+        print("=" * 80 + "\n")
         
         # Show cached models
         if self.all_results:
-            print(f"\n✓ Found cached results for: {', '.join(self.all_results.keys())}")
+            print(f"✓ Found cached results for: {', '.join(self.all_results.keys())}\n")
         
         start_time = time.time()
         
         self.update_status(
             status="running",
-            message="Starting parallel benchmark..."
+            message="Starting benchmark..."
         )
         
+        # Count enabled models
+        enabled_models = [m for m in self.config['models'] if m.get('enabled', True)]
+        print(f"Will benchmark {len(enabled_models)} model(s)\n")
+        
         # Benchmark each model
-        for model_config in self.config['models']:
-            if not model_config.get('enabled', True):
-                print(f"⊘ Skipping disabled model: {model_config['name']}")
-                continue
+        for idx, model_config in enumerate(enabled_models, 1):
+            print(f"\n[{idx}/{len(enabled_models)}] Processing: {model_config['name']}")
             
             try:
-                print(f"\n{'=' * 80}")
-                print(f"Benchmarking: {model_config['name']}")
-                print(f"{'=' * 80}")
+                results = self.benchmark_model_batch(model_config)
                 
-                results = self.benchmark_model_parallel(model_config)
-                
-                print(f"✓ Completed: {model_config['name']}")
-                print(f"  WER: {results['aggregated']['wer_mean']:.2f}%")
-                print(f"  Latency: {results['aggregated']['latency_mean']:.3f}s")
-                print(f"  Throughput: {results['aggregated']['throughput_mean']:.1f} chars/s")
-                
+                if results:
+                    print(f"✓ Completed: {model_config['name']}")
+                else:
+                    print(f"✗ Failed: {model_config['name']}")
+                    
             except Exception as e:
                 print(f"✗ Error benchmarking {model_config['name']}: {str(e)}")
                 import traceback
@@ -298,6 +356,8 @@ class BenchmarkRunner:
                 message="Generating reports and visualizations..."
             )
             self.generate_reports()
+        else:
+            print("\n⚠ No results to generate reports")
         
         total_time = time.time() - start_time
         
@@ -307,37 +367,51 @@ class BenchmarkRunner:
         )
         
         print(f"\n{'=' * 80}")
-        print(f"PARALLEL BENCHMARK COMPLETED in {format_duration(total_time)}")
+        print(f"BENCHMARK COMPLETED in {format_duration(total_time)}")
         print(f"Results saved to: {self.results_dir}")
         print(f"Cache saved to: {self.cache_dir}")
-        print(f"{'=' * 80}")
+        print(f"{'=' * 80}\n")
     
     def generate_reports(self):
         """Generate all reports and visualizations"""
-        print("\nGenerating reports...")
+        print("\n" + "=" * 80)
+        print("Generating Reports...")
+        print("=" * 80)
         
-        # Save JSON
-        if self.config['output'].get('save_metrics', True):
-            self.visualizer.save_json_report(self.all_results)
-            print("✓ Saved JSON report")
-        
-        # Create visualizations
-        if self.config['output'].get('save_visualizations', True):
-            try:
+        try:
+            # Save JSON
+            if self.config['output'].get('save_metrics', True):
+                self.visualizer.save_json_report(self.all_results)
+                print("✓ Saved JSON report (results.json)")
+            
+            # Create visualizations
+            if self.config['output'].get('save_visualizations', True):
                 self.visualizer.create_multi_metric_comparison(self.all_results)
-                print("✓ Created Chart.js data")
-            except Exception as e:
-                print(f"Warning: Error creating visualizations: {str(e)}")
+                print("✓ Created visualization data (charts_data.json)")
+                
+        except Exception as e:
+            print(f"⚠ Warning: Error creating visualizations: {str(e)}")
+            import traceback
+            traceback.print_exc()
+        
+        print("=" * 80 + "\n")
     
     def get_status(self) -> Dict[str, Any]:
         """Get current status"""
-        return self.current_status
+        return self.current_status.copy()
     
     def get_results(self) -> Dict[str, Any]:
         """Get all results"""
-        return self.all_results
+        return self.all_results.copy()
 
 
 if __name__ == "__main__":
-    runner = BenchmarkRunner()
-    runner.run()
+    try:
+        runner = BenchmarkRunner()
+        runner.run()
+    except KeyboardInterrupt:
+        print("\n\n⚠ Benchmark interrupted by user")
+    except Exception as e:
+        print(f"\n✗ Fatal error: {e}")
+        import traceback
+        traceback.print_exc()

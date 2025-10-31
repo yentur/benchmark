@@ -1,5 +1,8 @@
-# Benchmark Configuration
+# STT Benchmark Configuration
+
+# Models to benchmark
 models:
+  # Custom Models
   - name: "whisper-turbo-tr-merged"
     type: "whisper"
     path: "freyavoice/whisper-turbo-tr-merged"
@@ -9,6 +12,7 @@ models:
     type: "whisper"
     path: "freyavoice/whisper-turbo-tr-ft-merged"
     enabled: true
+
 
   - name: "whisper-tiny"
     type: "whisper"
@@ -28,17 +32,17 @@ models:
   - name: "whisper-medium"
     type: "whisper"
     path: "openai/whisper-medium"
-    enabled: true
+    enabled: false  
 
   - name: "whisper-large"
     type: "whisper"
     path: "openai/whisper-large"
-    enabled: true
+    enabled: false  
 
   - name: "whisper-large-v2"
     type: "whisper"
     path: "openai/whisper-large-v2"
-    enabled: true
+    enabled: false 
 
   - name: "whisper-large-v3"
     type: "whisper"
@@ -50,6 +54,7 @@ models:
     path: "openai/whisper-large-v3-turbo"
     enabled: true
 
+  # Distilled Models (Faster)
   - name: "distil-whisper-large-v2"
     type: "whisper"
     path: "distil-whisper/distil-large-v2"
@@ -61,26 +66,44 @@ models:
     enabled: true
 
 
+# Datasets to use for benchmarking
 datasets:
   - name: "freyavoice-uyumsoft-benchmark"
     path: "freyavoice/uyumsoft-benchmark"
     split: "train"
     enabled: true
-  
+
+
+# Benchmark settings
 benchmark:
-  batch_size: 1
+  # Batch processing (for efficiency)
+  batch_size: 1  # Increase for faster processing (if GPU memory allows)
+  
+  # Generation parameters
   max_new_tokens: 400
   num_beams: 5
-  device: "auto"  
-  torch_dtype: "float16"  
+  
+  # Device configuration
+  device: "auto"  # auto, cuda, cpu, or mps
+  torch_dtype: "float16"  # float16 (faster) or float32 (more accurate)
+  
+  # Performance tuning
+  use_bettertransformer: true  # Enable BetterTransformer if available
+  compile_model: false  # Use torch.compile (PyTorch 2.0+, experimental)
 
+
+# API server settings
 api:
   host: "0.0.0.0"
   port: 8000
-  reload: false
+  reload: false  # Enable for development
+
+
 
 output:
   results_dir: "results"
+  cache_dir: "cache"
   save_transcriptions: true
   save_metrics: true
   save_visualizations: true
+  save_detailed_results: true
