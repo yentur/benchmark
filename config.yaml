@@ -1,13 +1,69 @@
 # Benchmark Configuration
 models:
+  - name: "whisper-turbo-tr-merged"
+    type: "whisper"
+    path: "freyavoice/whisper-turbo-tr-merged"
+    enabled: true
+
   - name: "whisper-turbo-tr-ft-merged"
     type: "whisper"
     path: "freyavoice/whisper-turbo-tr-ft-merged"
     enabled: true
 
+  - name: "whisper-tiny"
+    type: "whisper"
+    path: "openai/whisper-tiny"
+    enabled: true
+
+  - name: "whisper-base"
+    type: "whisper"
+    path: "openai/whisper-base"
+    enabled: true
+
+  - name: "whisper-small"
+    type: "whisper"
+    path: "openai/whisper-small"
+    enabled: true
+
+  - name: "whisper-medium"
+    type: "whisper"
+    path: "openai/whisper-medium"
+    enabled: true
+
+  - name: "whisper-large"
+    type: "whisper"
+    path: "openai/whisper-large"
+    enabled: true
+
+  - name: "whisper-large-v2"
+    type: "whisper"
+    path: "openai/whisper-large-v2"
+    enabled: true
+
+  - name: "whisper-large-v3"
+    type: "whisper"
+    path: "openai/whisper-large-v3"
+    enabled: true
+
+  - name: "whisper-large-v3-turbo"
+    type: "whisper"
+    path: "openai/whisper-large-v3-turbo"
+    enabled: true
+
+  - name: "distil-whisper-large-v2"
+    type: "whisper"
+    path: "distil-whisper/distil-large-v2"
+    enabled: true
+
+  - name: "distil-whisper-large-v3"
+    type: "whisper"
+    path: "distil-whisper/distil-large-v3"
+    enabled: true
+
+
 datasets:
-  - name: "freyavoice-benchmark"
-    path: "freyavoice/speech-to-text-benchmark"
+  - name: "freyavoice-uyumsoft-benchmark"
+    path: "freyavoice/uyumsoft-benchmark"
     split: "train"
     enabled: true
   

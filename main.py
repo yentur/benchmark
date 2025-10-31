@@ -1,7 +1,8 @@
 import yaml
 import os
+import json
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Callable, Optional
 import time
 from datetime import datetime
 from datasets import load_dataset
@@ -15,7 +16,7 @@ from utils import calculate_wer, calculate_cer, aggregate_metrics, format_durati
 from visualizer import BenchmarkVisualizer
 
 class BenchmarkRunner:
-    """Main benchmark runner"""
+    """Main benchmark runner with caching support"""
     
     def __init__(self, config_path: str = "config.yaml"):
         with open(config_path, 'r') as f:
@@ -24,8 +25,12 @@ class BenchmarkRunner:
         self.results_dir = Path(self.config['output']['results_dir'])
         self.results_dir.mkdir(exist_ok=True)
         
+        self.cache_dir = Path("cache")
+        self.cache_dir.mkdir(exist_ok=True)
+        
         self.visualizer = BenchmarkVisualizer(str(self.results_dir))
         self.all_results = {}
+        self.sample_callback: Optional[Callable] = None
         self.current_status = {
             "status": "idle",
             "current_model": None,
@@ -34,6 +39,33 @@ class BenchmarkRunner:
             "total": 0,
             "message": "Ready to start"
         }
+        
+        # Load cached results
+        self._load_cache()
+    
+    def _load_cache(self):
+        """Load cached benchmark results"""
+        cache_file = self.cache_dir / "benchmark_cache.json"
+        if cache_file.exists():
+            try:
+                with open(cache_file, 'r', encoding='utf-8') as f:
+                    self.all_results = json.load(f)
+                print(f"✓ Loaded cached results for {len(self.all_results)} model(s)")
+            except Exception as e:
+                print(f"Warning: Could not load cache: {e}")
+    
+    def _save_cache(self):
+        """Save current results to cache"""
+        cache_file = self.cache_dir / "benchmark_cache.json"
+        try:
+            with open(cache_file, 'w', encoding='utf-8') as f:
+                json.dump(self.all_results, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"Warning: Could not save cache: {e}")
+    
+    def set_sample_callback(self, callback: Callable):
+        """Set callback for sample updates"""
+        self.sample_callback = callback
     
     def update_status(self, **kwargs):
         """Update current status"""
@@ -53,7 +85,6 @@ class BenchmarkRunner:
         )
         
         samples = []
-        
         dataset_subset = dataset
         
         for idx, item in enumerate(tqdm(dataset_subset, desc="Preparing samples")):
@@ -76,6 +107,12 @@ class BenchmarkRunner:
     def benchmark_model(self, model_config: Dict[str, Any]) -> Dict[str, Any]:
         """Benchmark a single model"""
         model_name = model_config['name']
+        
+        # Check if already in cache
+        if model_name in self.all_results:
+            print(f"⚡ Using cached results for: {model_name}")
+            return self.all_results[model_name]
+        
         self.update_status(
             status="loading_model",
             current_model=model_name,
@@ -144,6 +181,14 @@ class BenchmarkRunner:
                     dataset_results.append(result_entry)
                     model_results['detailed_results'].append(result_entry)
                     
+                    # Callback for UI updates (every 100 samples or last sample)
+                    if self.sample_callback and (idx % 100 == 0 or idx == len(samples) - 1):
+                        self.sample_callback(
+                            sample['reference'],
+                            result['transcription'],
+                            idx
+                        )
+                    
                     # Cleanup temp file
                     try:
                         os.unlink(sample['audio_path'])
@@ -172,6 +217,10 @@ class BenchmarkRunner:
         # Cleanup
         model.cleanup()
         
+        # Save to cache immediately
+        self.all_results[model_name] = model_results
+        self._save_cache()
+        
         return model_results
     
     def run(self):
@@ -179,6 +228,10 @@ class BenchmarkRunner:
         print("=" * 80)
         print("SPEECH-TO-TEXT BENCHMARK")
         print("=" * 80)
+        
+        # Show cached models
+        if self.all_results:
+            print(f"\n✓ Found cached results for: {', '.join(self.all_results.keys())}")
         
         start_time = time.time()
         
@@ -199,7 +252,6 @@ class BenchmarkRunner:
                 print(f"{'=' * 80}")
                 
                 results = self.benchmark_model(model_config)
-                self.all_results[model_config['name']] = results
                 
                 print(f"✓ Completed: {model_config['name']}")
                 print(f"  WER: {results['aggregated']['wer_mean']:.2f}%")
@@ -230,6 +282,7 @@ class BenchmarkRunner:
         print(f"\n{'=' * 80}")
         print(f"BENCHMARK COMPLETED in {format_duration(total_time)}")
         print(f"Results saved to: {self.results_dir}")
+        print(f"Cache saved to: {self.cache_dir}")
         print(f"{'=' * 80}")
     
     def generate_reports(self):
