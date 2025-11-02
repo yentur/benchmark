@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 class BenchmarkVisualizer:
-    """Modern visualization generator for benchmark results"""
+    """Modern visualization generator for benchmark results with multi-dataset support"""
     
     def __init__(self, output_dir: str = "results"):
         self.output_dir = Path(output_dir)
@@ -47,20 +47,19 @@ class BenchmarkVisualizer:
         return round(wer_score + cer_score + latency_score + throughput_score, 2)
     
     def _generate_chart_data(self, results: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-        """Generate comprehensive chart data for all visualizations"""
+        """Generate comprehensive chart data for all visualizations - HANDLES MULTIPLE DATASETS"""
         if not results:
             return {}
         
         models = list(results.keys())
         
-        # Initialize chart data structure - FIX: Proper format for Chart.js
+        # Initialize chart data structure
         chart_data = {
             'models': models,
             'colors': self.colors,
             'timestamp': str(np.datetime64('now')),
             'performance_scores': [],
             'rankings': {},
-            # FIX: Proper nested structure for metrics
             'wer': {
                 'mean': [],
                 'std': [],
@@ -88,12 +87,26 @@ class BenchmarkVisualizer:
                 'min': [],
                 'max': []
             },
-            'distributions': {}
+            'distributions': {},
+            'datasets': {}  # NEW: Store per-dataset results
         }
         
-        # Process each model
+        # Process each model - USE AGGREGATED RESULTS FOR OVERALL CHARTS
         for model_name in models:
-            agg = results[model_name].get('aggregated', {})
+            model_results = results[model_name]
+            
+            # Use aggregated metrics for overall comparison
+            agg = model_results.get('aggregated', {})
+            
+            if not agg:
+                # Fallback: compute from detailed_results if aggregated missing
+                detailed = model_results.get('detailed_results', [])
+                if detailed:
+                    from utils import aggregate_metrics
+                    agg = aggregate_metrics(detailed)
+                else:
+                    # Skip this model if no data
+                    continue
             
             # WER metrics
             chart_data['wer']['mean'].append(round(agg.get('wer_mean', 0), 2))
@@ -123,7 +136,7 @@ class BenchmarkVisualizer:
             chart_data['throughput']['max'].append(round(agg.get('throughput_max', 0), 1))
             
             # Detailed distributions
-            detailed = results[model_name].get('detailed_results', [])
+            detailed = model_results.get('detailed_results', [])
             chart_data['distributions'][model_name] = {
                 'wer': [round(r.get('wer', 0), 2) for r in detailed if 'wer' in r],
                 'cer': [round(r.get('cer', 0), 2) for r in detailed if 'cer' in r],
@@ -134,28 +147,49 @@ class BenchmarkVisualizer:
             # Performance score
             score = self._calculate_performance_score(agg)
             chart_data['performance_scores'].append(score)
+            
+            # NEW: Store per-dataset metrics
+            datasets = model_results.get('datasets', {})
+            for dataset_name, dataset_data in datasets.items():
+                if dataset_name not in chart_data['datasets']:
+                    chart_data['datasets'][dataset_name] = {}
+                
+                metrics = dataset_data.get('metrics', {})
+                chart_data['datasets'][dataset_name][model_name] = {
+                    'wer_mean': round(metrics.get('wer_mean', 0), 2),
+                    'wer_std': round(metrics.get('wer_std', 0), 2),
+                    'cer_mean': round(metrics.get('cer_mean', 0), 2),
+                    'cer_std': round(metrics.get('cer_std', 0), 2),
+                    'latency_mean': round(metrics.get('latency_mean', 0), 3),
+                    'latency_std': round(metrics.get('latency_std', 0), 3),
+                    'throughput_mean': round(metrics.get('throughput_mean', 0), 1),
+                    'samples': dataset_data.get('samples', 0)
+                }
         
         # Rankings - Find best models
-        if models:
-            chart_data['rankings']['best_wer'] = models[
-                int(np.argmin(chart_data['wer']['mean']))
-            ]
-            
-            chart_data['rankings']['best_cer'] = models[
-                int(np.argmin(chart_data['cer']['mean']))
-            ]
-            
-            chart_data['rankings']['fastest'] = models[
-                int(np.argmin(chart_data['latency']['mean']))
-            ]
-            
-            chart_data['rankings']['best_throughput'] = models[
-                int(np.argmax(chart_data['throughput']['mean']))
-            ]
-            
-            chart_data['rankings']['best_overall'] = models[
-                int(np.argmax(chart_data['performance_scores']))
-            ]
+        if models and chart_data['wer']['mean']:
+            try:
+                chart_data['rankings']['best_wer'] = models[
+                    int(np.argmin(chart_data['wer']['mean']))
+                ]
+                
+                chart_data['rankings']['best_cer'] = models[
+                    int(np.argmin(chart_data['cer']['mean']))
+                ]
+                
+                chart_data['rankings']['fastest'] = models[
+                    int(np.argmin(chart_data['latency']['mean']))
+                ]
+                
+                chart_data['rankings']['best_throughput'] = models[
+                    int(np.argmax(chart_data['throughput']['mean']))
+                ]
+                
+                chart_data['rankings']['best_overall'] = models[
+                    int(np.argmax(chart_data['performance_scores']))
+                ]
+            except Exception as e:
+                print(f"⚠ Warning calculating rankings: {e}")
         
         return chart_data
     
@@ -179,10 +213,16 @@ class BenchmarkVisualizer:
             
             # Print rankings
             if chart_data.get('rankings'):
-                print("\n📊 Rankings:")
+                print(f"\n📊 Rankings:")
                 for metric, model in chart_data['rankings'].items():
                     if model:
                         print(f"  • {metric.replace('_', ' ').title()}: {model}")
+            
+            # Print dataset info
+            if chart_data.get('datasets'):
+                print(f"\n📁 Datasets: {len(chart_data['datasets'])} dataset(s)")
+                for dataset_name in chart_data['datasets'].keys():
+                    print(f"  • {dataset_name}")
             
             return chart_data
             
@@ -191,18 +231,6 @@ class BenchmarkVisualizer:
             import traceback
             traceback.print_exc()
             return chart_data
-    
-    def create_multi_metric_comparison(self, results: Dict[str, Dict[str, Any]]):
-        """Create comparison data for all metrics"""
-        return self.create_charts_json(results)
-    
-    def create_latency_distribution(self, results: Dict[str, Dict[str, Any]]):
-        """Create latency distribution data (included in charts_json)"""
-        pass  # Already included in charts_data.json
-    
-    def create_summary_report(self, results: Dict[str, Dict[str, Any]]):
-        """Create summary report (included in charts_json)"""
-        pass  # Already included in charts_data.json
     
     def save_json_report(self, results: Dict[str, Dict[str, Any]], filename: str = "results.json"):
         """Save complete results as JSON"""
@@ -218,6 +246,17 @@ class BenchmarkVisualizer:
             print(f"\n📋 Summary:")
             print(f"  • Total models: {len(results)}")
             
+            # Count unique datasets
+            all_datasets = set()
+            for model_results in results.values():
+                datasets = model_results.get('datasets', {})
+                all_datasets.update(datasets.keys())
+            
+            if all_datasets:
+                print(f"  • Datasets tested: {len(all_datasets)}")
+                for dataset in all_datasets:
+                    print(f"    - {dataset}")
+            
             total_samples = sum(
                 r.get('aggregated', {}).get('total_samples', 0)
                 for r in results.values()
@@ -228,94 +267,3 @@ class BenchmarkVisualizer:
             print(f"⚠ Error saving results: {e}")
             import traceback
             traceback.print_exc()
-    
-    def generate_html_dashboard(self, results: Dict[str, Dict[str, Any]]) -> str:
-        """Generate a simple HTML dashboard"""
-        chart_data = self._generate_chart_data(results)
-        
-        html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>STT Benchmark Results</title>
-    <style>
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            margin: 0;
-            padding: 20px;
-            background: #f5f5f5;
-        }}
-        .container {{
-            max-width: 1200px;
-            margin: 0 auto;
-            background: white;
-            padding: 30px;
-            border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        }}
-        h1 {{
-            margin: 0 0 30px 0;
-            color: #1a1a1a;
-        }}
-        .rankings {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-bottom: 30px;
-        }}
-        .ranking-card {{
-            padding: 15px;
-            background: #f8f9fa;
-            border-radius: 6px;
-            border-left: 4px solid #000;
-        }}
-        .ranking-card h3 {{
-            margin: 0 0 10px 0;
-            font-size: 14px;
-            color: #666;
-            text-transform: uppercase;
-        }}
-        .ranking-card p {{
-            margin: 0;
-            font-size: 18px;
-            font-weight: 600;
-            color: #1a1a1a;
-        }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🎤 STT Benchmark Results</h1>
-        
-        <h2>🏆 Rankings</h2>
-        <div class="rankings">
-"""
-        
-        # Add rankings
-        for metric, model in chart_data.get('rankings', {}).items():
-            if model:
-                html += f"""
-            <div class="ranking-card">
-                <h3>{metric.replace('_', ' ').title()}</h3>
-                <p>{model}</p>
-            </div>
-"""
-        
-        html += """
-        </div>
-        
-        <p>View detailed results in <code>results.json</code> and visualization data in <code>charts_data.json</code></p>
-    </div>
-</body>
-</html>
-"""
-        
-        # Save HTML
-        output_file = self.output_dir / "dashboard.html"
-        with open(output_file, 'w', encoding='utf-8') as f:
-            f.write(html)
-        
-        print(f"✓ Dashboard saved to: {output_file}")
-        
-        return html

@@ -3,7 +3,7 @@ import os
 import json
 from model import ModelFactory
 from whisper_model import WhisperModel
-from wav2vec2_model import Wav2Vec2Model # <--- BU SATIRI EKLEYİN
+from wav2vec2_model import Wav2Vec2Model
 from deepgram_model import DeepgramModel 
 from utils import calculate_wer, calculate_cer, aggregate_metrics, format_duration
 from visualizer import BenchmarkVisualizer
@@ -18,14 +18,9 @@ from tqdm import tqdm
 import torch
 import gc
 
-from model import ModelFactory
-from whisper_model import WhisperModel
-from utils import calculate_wer, calculate_cer, aggregate_metrics, format_duration
-from visualizer import BenchmarkVisualizer
-
 
 class BenchmarkRunner:
-    """Optimized benchmark runner with batch processing"""
+    """Optimized benchmark runner with batch processing and multi-dataset support"""
     
     def __init__(self, config_path: str = "config.yaml"):
         with open(config_path, 'r') as f:
@@ -50,7 +45,7 @@ class BenchmarkRunner:
         }
         
         # Batch size for processing
-        self.batch_size = self.config['benchmark'].get('batch_size', 8)
+        self.batch_size = self.config['benchmark'].get('batch_size', 1)
         
         # Load cached results
         self._load_cache()
@@ -114,8 +109,14 @@ class BenchmarkRunner:
                 audio_array = item['audio']['array']
                 sr = item['audio']['sampling_rate']
                 
-                # Create temp file with proper cleanup
-                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.wav', dir=self.cache_dir)
+                # Create temp file with identifiable name for audio serving
+                dataset_id = dataset_config['name'].replace('/', '_')
+                temp_file = tempfile.NamedTemporaryFile(
+                    delete=False, 
+                    suffix='.wav', 
+                    prefix=f"{dataset_id}_{idx}_",
+                    dir=self.cache_dir
+                )
                 temp_path = temp_file.name
                 temp_file.close()
                 
@@ -124,7 +125,7 @@ class BenchmarkRunner:
                 samples.append({
                     'audio_path': temp_path,
                     'reference': item.get('sentence', item.get('text', '')),
-                    'id': f"{dataset_config['name']}_{idx}",
+                    'id': f"{dataset_id}_{idx}",
                     'dataset': dataset_config['name']
                 })
             except Exception as e:
@@ -135,16 +136,13 @@ class BenchmarkRunner:
         return samples
     
     def cleanup_temp_files(self, samples: List[Dict[str, Any]]):
-        """Clean up temporary audio files"""
-        for sample in samples:
-            try:
-                if os.path.exists(sample['audio_path']):
-                    os.unlink(sample['audio_path'])
-            except Exception as e:
-                print(f"⚠ Warning: Could not delete {sample['audio_path']}: {e}")
+        """Clean up temporary audio files - KEEP FOR AUDIO PLAYBACK"""
+        # Don't delete files - they're needed for audio playback in the dashboard
+        # Files will be cleaned up when cache is cleared
+        pass
     
     def benchmark_model_batch(self, model_config: Dict[str, Any]) -> Dict[str, Any]:
-        """Benchmark a single model with BATCH processing"""
+        """Benchmark a single model with BATCH processing - IMPROVED DATASET SUPPORT"""
         model_name = model_config['name']
         
         # Check if already in cache
@@ -181,8 +179,8 @@ class BenchmarkRunner:
         model_results = {
             'model_name': model_name,
             'model_path': model_config['path'],
-            'datasets': {},
-            'detailed_results': [],
+            'datasets': {},  # Store results per dataset
+            'detailed_results': [],  # All results combined
             'start_time': datetime.now().isoformat()
         }
         
@@ -219,7 +217,7 @@ class BenchmarkRunner:
                         self.update_status(
                             progress=processed_samples,
                             total=total_samples,
-                            message=f"Processing {model_name}: {processed_samples}/{total_samples}"
+                            message=f"Processing {model_name} on {dataset_name}: {processed_samples}/{total_samples}"
                         )
                         
                         # Transcribe with metrics
@@ -258,10 +256,10 @@ class BenchmarkRunner:
                         pbar.update(1)
                         continue
             
-            # Clean up temp files for this dataset
-            self.cleanup_temp_files(samples)
+            # DON'T clean up temp files - needed for audio playback
+            # self.cleanup_temp_files(samples)
             
-            # Aggregate dataset results
+            # Aggregate dataset results - STORE PER DATASET
             if dataset_results:
                 model_results['datasets'][dataset_name] = {
                     'samples': len(dataset_results),
@@ -306,7 +304,7 @@ class BenchmarkRunner:
             self.all_results[model_name] = model_results
             self._save_cache()
             
-            # IMPORTANT: Generate visualizations after each model
+            # Generate visualizations after each model
             self._generate_visualizations()
         else:
             print(f"⚠ Warning: No results collected for {model_name}")
@@ -434,4 +432,4 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n✗ Fatal error: {e}")
         import traceback
-        traceback.print_exc()   
+        traceback.print_exc()

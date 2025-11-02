@@ -1,6 +1,6 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, StreamingResponse
 from pathlib import Path
 import asyncio
 import json
@@ -8,6 +8,7 @@ import yaml
 from typing import Dict, Any, Set
 import threading
 import traceback
+import io
 
 from main import BenchmarkRunner
 
@@ -154,7 +155,7 @@ async def start_benchmark(background_tasks: BackgroundTasks):
 
 @app.get("/api/benchmark/status")
 async def get_status():
-    """Get current benchmark status"""
+    """Get current benchmark status - OPTIMIZED: Reduced data transfer"""
     global benchmark_runner, is_running, current_sample
     
     try:
@@ -222,7 +223,7 @@ async def get_results():
 
 @app.get("/api/model/{model_name}/examples")
 async def get_model_examples(model_name: str, limit: int = 10):
-    """Get example predictions for a specific model"""
+    """Get example predictions for a specific model - WITH AUDIO PATHS"""
     try:
         # Try cache first
         cache_file = cache_dir / "benchmark_cache.json"
@@ -266,7 +267,11 @@ async def get_model_examples(model_name: str, limit: int = 10):
         
         for i in range(0, min(len(sorted_results), limit * step), step):
             if i < len(sorted_results):
-                examples.append(sorted_results[i])
+                example = sorted_results[i].copy()
+                # Add audio file availability check
+                if 'id' in example:
+                    example['has_audio'] = True  # We'll check this in frontend
+                examples.append(example)
         
         return {
             "model": model_name,
@@ -277,6 +282,44 @@ async def get_model_examples(model_name: str, limit: int = 10):
     except Exception as e:
         return JSONResponse(
             {"error": str(e), "traceback": traceback.format_exc()},
+            status_code=500
+        )
+
+
+@app.get("/api/audio/{sample_id}")
+async def get_audio(sample_id: str):
+    """Serve audio file for a sample - NEW ENDPOINT"""
+    try:
+        # Check if audio file exists in cache
+        audio_files = list(cache_dir.glob(f"*{sample_id}*.wav"))
+        
+        if not audio_files:
+            # Try to find by pattern matching
+            audio_files = list(cache_dir.glob("*.wav"))
+            matching = [f for f in audio_files if sample_id in f.name]
+            if matching:
+                audio_files = matching
+        
+        if not audio_files:
+            return JSONResponse(
+                {"error": "Audio file not found"},
+                status_code=404
+            )
+        
+        audio_file = audio_files[0]
+        
+        # Stream the audio file
+        return FileResponse(
+            audio_file,
+            media_type="audio/wav",
+            headers={
+                "Content-Disposition": f"inline; filename={audio_file.name}"
+            }
+        )
+        
+    except Exception as e:
+        return JSONResponse(
+            {"error": str(e)},
             status_code=500
         )
 
@@ -382,7 +425,7 @@ async def clear_cache():
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket for real-time updates"""
+    """WebSocket for real-time updates - OPTIMIZED: 2 second intervals"""
     await websocket.accept()
     active_websockets.add(websocket)
     
@@ -391,12 +434,12 @@ async def websocket_endpoint(websocket: WebSocket):
         
         while True:
             try:
-                # Send status update
+                # Send status update - REDUCED FREQUENCY
                 status = await get_status()
                 await websocket.send_json(status)
                 
-                # Wait before next update
-                await asyncio.sleep(1.0)
+                # Wait before next update - OPTIMIZED: 2 seconds instead of 1
+                await asyncio.sleep(2.0)
                 
             except WebSocketDisconnect:
                 break

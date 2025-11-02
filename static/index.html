@@ -13,7 +13,7 @@
         <header class="header">
             <div class="header-content">
                 <h1 class="title">STT BENCHMARK</h1>
-                <div class="subtitle">Real-time Speech-to-Text Performance Analysis with Parallel Processing</div>
+                <div class="subtitle">Real-time Speech-to-Text Performance Analysis with Multi-Dataset Support</div>
             </div>
             <div class="header-actions">
                 <button id="clearCacheBtn" class="btn btn-secondary">
@@ -26,7 +26,7 @@
         <section class="control-panel card">
             <div class="control-left">
                 <button id="startBtn" class="btn btn-primary">
-                    <span class="icon">▶</span> Start Parallel Benchmark
+                    <span class="icon">▶</span> Start Benchmark
                 </button>
                 <div class="cache-status" id="cacheStatus">
                     <span class="cache-icon">💾</span>
@@ -66,7 +66,7 @@
                 </div>
             </div>
             
-            <div class="message" id="statusMessage">Initializing parallel processing...</div>
+            <div class="message" id="statusMessage">Initializing...</div>
             
             <!-- Sample Preview -->
             <div class="sample-preview" id="samplePreview" style="display: none;">
@@ -96,10 +96,8 @@
             <!-- Quick Stats -->
             <div class="quick-stats" id="quickStats"></div>
             
-            <!-- Results Table -->
-            <div class="table-container">
-                <table class="results-table" id="resultsTable"></table>
-            </div>
+            <!-- Results Table with Tabs (will be populated by JS) -->
+            <div id="resultsTable"></div>
             
             <!-- Model Cards -->
             <div class="model-cards" id="modelCards"></div>
@@ -176,7 +174,7 @@
         </section>
     </div>
 
-    <!-- Example Modal -->
+    <!-- Example Modal with Audio -->
     <div id="exampleModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
