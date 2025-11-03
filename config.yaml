@@ -3,18 +3,16 @@
 # Models to benchmark
 models:
   # Custom Models
-  - name: "whisper-turbo-41000"
+  - name: "checkpoint-4100-2"
     type: "whisper"
     path: "/home/ubuntu/tts-demo/tts-demo/checkpoint-41000"
     enabled: true
 
 
-
-
 # Datasets to use for benchmarking
 datasets:
-  - name: "freyavoice-uyumsoft-benchmark"
-    path: "freyavoice/uyumsoft-benchmark"
+  - name: "freyavoice-speech-to-text-benchmark"
+    path: "freyavoice/speech-to-text-benchmark"
     split: "train"
     enabled: true
 

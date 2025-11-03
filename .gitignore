@@ -5,3 +5,7 @@ results*/
 *.out
 venv/
 cache/
+cache*/
+*.log
+*.out
+*.ipynb
